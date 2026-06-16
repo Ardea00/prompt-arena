@@ -19,6 +19,7 @@ Run:
 
 import re
 import time
+import threading
 import streamlit as st
 
 # ----------------------------------------------------------------------------
@@ -72,24 +73,45 @@ st.markdown(
 
 # ----------------------------------------------------------------------------
 # Shared state
+#
+# The leaderboard is ONE board shared by every player. On Streamlit Community
+# Cloud the app runs as a single process, so a @st.cache_resource object is
+# shared across all viewer sessions — every submission lands on the same board,
+# with no database, no secrets, no API keys. A lock keeps concurrent writes safe.
+# (It resets if the Cloud app reboots/sleeps — use ⬇️ Download answers for a
+#  durable copy. For permanent storage, swap this store for an external DB.)
 # ----------------------------------------------------------------------------
-if "leaderboard" not in st.session_state:
-    st.session_state.leaderboard = []        # rows: name, game, points, detail, t
+@st.cache_resource
+def _shared_store():
+    return {"rows": [], "lock": threading.Lock()}
+
+
+STORE = _shared_store()
+
+
+def get_rows():
+    """A snapshot copy of the shared leaderboard rows."""
+    with STORE["lock"]:
+        return list(STORE["rows"])
+
+
+# Player name stays per-session — each browser is a different player.
 if "player" not in st.session_state:
     st.session_state.player = ""
 
 
 def add_score(name, game, points, detail, prompt="", answer=""):
-    st.session_state.leaderboard.append(
-        {"name": (name or "anon").strip(), "game": game,
-         "points": int(points), "detail": detail,
-         "prompt": prompt.strip(), "answer": answer.strip(), "t": time.time()}
-    )
+    with STORE["lock"]:
+        STORE["rows"].append(
+            {"name": (name or "anon").strip(), "game": game,
+             "points": int(points), "detail": detail,
+             "prompt": prompt.strip(), "answer": answer.strip(), "t": time.time()}
+        )
 
 
 def build_export_md() -> str:
     """All submissions as a Markdown doc — hand this to Claude to build the real leaderboard."""
-    lb = st.session_state.leaderboard
+    lb = get_rows()
     lines = ["# Prompt Arena — submissions export",
              f"\n_{len(lb)} submissions · generated {time.strftime('%Y-%m-%d %H:%M')}_\n",
              "\nClaude: use this to compute the real leaderboard. Each entry has the player, "
@@ -326,10 +348,14 @@ with tab_hunt:
 # ----------------------------------------------------------------------------
 with tab_board:
     st.markdown("### 🏆 Leaderboard")
-    lb = st.session_state.leaderboard
-    if not lb:
-        st.info("No scores yet. Go play a round!")
-    else:
+    st.caption("One shared board — everyone's submissions land here live. Updates every few seconds.")
+
+    @st.fragment(run_every=3)
+    def render_standings():
+        lb = get_rows()
+        if not lb:
+            st.info("No scores yet. Go play a round!")
+            return
         totals = {}
         for r in lb:
             d = totals.setdefault(r["name"], {"total": 0, "games": set()})
@@ -343,13 +369,16 @@ with tab_board:
                 f"<div class='arena-card'><h3 style='margin:0'>{medal} {name} — {d['total']} pts</h3>"
                 f"<span class='mono'>{' · '.join(sorted(d['games']))}</span></div>",
                 unsafe_allow_html=True)
-        with st.expander("Full submission log"):
+        with st.expander(f"Full submission log ({len(lb)} total)"):
             for r in reversed(lb[-50:]):
                 st.write(f"**{r['name']}** · {r['game']} · {r['points']} pts · {r['detail']}")
 
+    render_standings()
+
+    lb = get_rows()
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("🔄 Refresh board"):
+        if st.button("🔄 Refresh now"):
             st.rerun()
     with c2:
         st.download_button(
@@ -361,9 +390,12 @@ with tab_board:
             help="Exports every player's prompt + Copilot answer. Hand this file to Claude to build the real, fairly-judged leaderboard.",
         )
     with c3:
-        if st.button("🗑️ Reset leaderboard"):
-            st.session_state.leaderboard = []
-            st.rerun()
+        if st.checkbox("Facilitator", key="is_facilitator",
+                       help="Tick to enable the shared reset — it clears the board for EVERYONE."):
+            if st.button("🗑️ Reset shared board"):
+                with STORE["lock"]:
+                    STORE["rows"].clear()
+                st.rerun()
 
     if lb:
         st.caption("💡 After the games: download the .md and give it to Claude — it'll re-judge the creative "
