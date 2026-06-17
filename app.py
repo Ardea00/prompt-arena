@@ -22,6 +22,8 @@ import time
 import threading
 import streamlit as st
 
+from arena_logic import is_blank, submission_key
+
 # ----------------------------------------------------------------------------
 # Page + theme (ION palette to match the deck)
 # ----------------------------------------------------------------------------
@@ -83,7 +85,7 @@ st.markdown(
 # ----------------------------------------------------------------------------
 @st.cache_resource
 def _shared_store():
-    return {"rows": [], "lock": threading.Lock()}
+    return {"rows": [], "submitted": set(), "lock": threading.Lock()}
 
 
 STORE = _shared_store()
@@ -107,6 +109,17 @@ def add_score(name, game, points, detail, prompt="", answer=""):
              "points": int(points), "detail": detail,
              "prompt": prompt.strip(), "answer": answer.strip(), "t": time.time()}
         )
+
+
+def try_claim(name, game, subchallenge):
+    """Reserve this player's one shot at this challenge.
+    Returns True if claimed (first time), False if already submitted."""
+    key = submission_key(name, game, subchallenge)
+    with STORE["lock"]:
+        if key in STORE["submitted"]:
+            return False
+        STORE["submitted"].add(key)
+        return True
 
 
 def build_export_md() -> str:
@@ -249,6 +262,12 @@ with tab_golf:
     if st.button("Score my shot ⛳", key="golf_btn"):
         name = require_name()
         if name:
+            if is_blank(prompt) or is_blank(pasted):
+                st.warning("✍️ Enter BOTH your prompt and Copilot's output before scoring.")
+                st.stop()
+            if not try_claim(name, "Golf", choice):
+                st.warning(f"🔒 You already submitted for **{choice}**. Pick another hole.")
+                st.stop()
             chars = len(prompt)
             exact = norm(pasted) == norm(g["target"])
             sim = similar(pasted, g["target"])
@@ -292,6 +311,12 @@ with tab_jail:
     if st.button("Did it break? 🔓", key="jail_btn"):
         name = require_name()
         if name:
+            if is_blank(pasted_j):
+                st.warning("📋 Paste Copilot's response before scoring.")
+                st.stop()
+            if not try_claim(name, "Jailbreak", "main"):
+                st.warning("🔒 You already submitted a Jailbreak attempt.")
+                st.stop()
             low = pasted_j.lower()
             broken = [desc for desc, pats in JAILBREAK_RULES if any(re.search(p, low) for p in pats)]
             if broken:
@@ -328,6 +353,12 @@ with tab_hunt:
     if st.button("Judge it 👻", key="hunt_btn"):
         name = require_name()
         if name:
+            if is_blank(pasted_h):
+                st.warning("📋 Paste Copilot's answer before scoring.")
+                st.stop()
+            if not try_claim(name, "Hunt", hchoice):
+                st.warning(f"🔒 You already submitted for **{hchoice}**. Pick another trap.")
+                st.stop()
             low = pasted_h.lower()
             honest = any(re.search(p, low) for p in hp["honest"])
             halluc = any(re.search(p, low) for p in hp["halluc"])
@@ -395,6 +426,7 @@ with tab_board:
             if st.button("🗑️ Reset shared board"):
                 with STORE["lock"]:
                     STORE["rows"].clear()
+                    STORE["submitted"].clear()
                 st.rerun()
 
     if lb:
