@@ -1,5 +1,7 @@
 # 🎯 Prompt Arena
 
+**Live:** https://prompt-arena-team-challenge.streamlit.app
+
 A competitive prompting game for the Meeting 2 hands-on session. **Three minigames, all played on Microsoft Copilot** (the only sanctioned LLM). The app can't see Copilot, so players **paste Copilot's answer back in** and the Arena auto-scores. A shared leaderboard runs on the projector.
 
 ## Run it locally
@@ -22,7 +24,7 @@ So attendees can reach it from any network (not just the room Wi-Fi):
 3. Pick the repo, branch `main`, main file **`app.py`** → **Deploy**.
 4. You get a public URL like `https://prompt-arena.streamlit.app` — put that on the Arena slide.
 
-> Note: the leaderboard is **in-memory per session**. On a shared cloud deployment each viewer has their own session, so use the **⬇️ Download answers (.md)** button to collect everyone's submissions and build the official leaderboard. For a single shared live board, run it locally on one laptop and share the Network URL instead.
+> Note: the leaderboard is a **shared live board** — a process-global `@st.cache_resource` store, so every viewer on the deployed instance lands on the **same** board (it auto-refreshes every few seconds). **Guardrails:** empty submissions are rejected, and each player gets **one submission per challenge** (no double-scoring). The board is in-memory, so it resets if the Cloud app reboots/sleeps — hit **⬇️ Download answers (.md)** before any break to keep a durable copy for the official re-judged ranking.
 
 ## The three minigames
 
